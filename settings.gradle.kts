@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 rootProject.name = "QRCodeMultiTracker"
 include(":app")
 include(":mlkit-common")
+include(":mlkit-barcode-scanning")
