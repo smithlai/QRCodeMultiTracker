@@ -1,3 +1,5 @@
+apply(from = "../versions.mlkit.gradle")
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -38,8 +40,11 @@ android {
         compose = true
     }
 }
-
+val depsMap = project.extra.get("deps") as Map<*, *>
 dependencies {
+    implementation(project(":mlkit-common"))
+    implementation(project(":mlkit-barcode-scanning"))
+    implementation(depsMap["app_dialog"].toString())
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

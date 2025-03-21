@@ -1,47 +1,57 @@
 package com.smith.lai.qrcodemultitracker
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import com.smith.lai.qrcodemultitracker.ui.theme.QRCodeMultiTrackerTheme
+import android.util.Log
+import android.widget.ImageView
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.king.app.dialog.AppDialog
+import com.king.app.dialog.AppDialogConfig
+import com.king.camera.scan.AnalyzeResult
+import com.king.camera.scan.CameraScan
+import com.smith.lai.qrcodemultitracker.ext.drawRect
+import com.king.mlkit.vision.barcode.QRCodeCameraScanActivity
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            QRCodeMultiTrackerTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+/**
+ * 扫描多个二维码示例
+ * @author <a href="mailto:jenly1314@gmail.com">Jenly</a>
+ */
+class MainActivity : QRCodeCameraScanActivity() {
+    override fun initCameraScan(cameraScan: CameraScan<MutableList<Barcode>>) {
+        super.initCameraScan(cameraScan)
+        cameraScan.setPlayBeep(true)
+            .setVibrate(true)
+    }
+
+    override fun getLayoutId(): Int {
+        return R.layout.multiple_qrcode_scan_activity
+    }
+
+    override fun onScanResultCallback(result: AnalyzeResult<MutableList<Barcode>>) {
+        // 停止分析
+        cameraScan.setAnalyzeImage(false)
+
+        val buffer = StringBuilder()
+        val bitmap = result.bitmap?.drawRect { canvas, paint ->
+            for ((index, data) in result.result.withIndex()) {
+                buffer.append("[$index] ").append(data.displayValue).append("\n")
+                data.boundingBox?.let { box ->
+                    canvas.drawRect(box, paint)
                 }
             }
         }
-    }
-}
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
+        val config = AppDialogConfig(this, R.layout.barcode_result_dialog)
+        config.setContent(buffer).setOnClickConfirm {
+            AppDialog.INSTANCE.dismissDialog()
+            cameraScan.setAnalyzeImage(true)
+        }.setOnClickCancel {
+            AppDialog.INSTANCE.dismissDialog()
+            finish()
+        }
 
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    QRCodeMultiTrackerTheme {
-        Greeting("Android")
+        val imageView = config.getView<ImageView>(R.id.ivDialogContent)
+        imageView.setImageBitmap(bitmap)
+        AppDialog.INSTANCE.showDialog(config, false)
     }
+
+
 }

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.QRCodeMultiTracker" parent="Theme.AppCompat.Light.NoActionBar" />
 
-    <style name="Theme.QRCodeMultiTracker" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="OnClick">
+        <item name="android:clickable">true</item>
+        <item name="android:onClick">onClick</item>
+    </style>
 </resources>
