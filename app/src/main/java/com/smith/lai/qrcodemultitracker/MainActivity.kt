@@ -155,40 +155,132 @@ class MainActivity : BarcodeCameraScanActivity() {
         // Store current barcodes
         currentBarcodes = result.result
 
+        // 獲取螢幕尺寸
+        val screenWidth = overlayImageView?.width ?: resources.displayMetrics.widthPixels
+        val screenHeight = overlayImageView?.height ?: resources.displayMetrics.heightPixels
+
         // 根據設置決定使用哪種覆蓋層模式
         val bitmap: Bitmap
         if (USE_CAMERA_BITMAP && result.bitmap != null) {
-            // 使用相機預覽圖像作為覆蓋層基礎
-            bitmap = result.bitmap!!.drawRect { canvas, paint ->
-                // First draw black border around the entire image
-                drawBlackBorder(canvas)
+            // 使用相機預覽圖像作為覆蓋層基礎，但調整尺寸以適應螢幕
+            val sourceBitmap = result.bitmap
 
-                // Then draw the barcode bounding boxes
-                drawBarcodeBoxes(canvas, paint, result.result)
-            }
-        } else {
-            // 創建透明覆蓋層，只繪製框架
-            val width = result.bitmap?.width ?: overlayImageView?.width ?: 1000
-            val height = result.bitmap?.height ?: overlayImageView?.height ?: 1000
-
-            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            // 創建一個與螢幕大小相同的bitmap
+            bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
-            // 整個畫布透明
-            canvas.drawColor(Color.TRANSPARENT)
 
-            // 繪製黑色邊框
+            // 計算縮放和位置，確保相機預覽居中
+            val sourceWidth = sourceBitmap!!.width
+            val sourceHeight = sourceBitmap!!.height
+
+            // 計算縮放比例（保持寬高比）
+            val scaleX = screenWidth.toFloat() / sourceWidth
+            val scaleY = screenHeight.toFloat() / sourceHeight
+            val scale = maxOf(scaleX, scaleY) // 使用較大的縮放比例確保覆蓋整個螢幕
+
+            // 計算縮放後的尺寸
+            val scaledWidth = sourceWidth * scale
+            val scaledHeight = sourceHeight * scale
+
+            // 計算居中的位置
+            val left = (screenWidth - scaledWidth) / 2
+            val top = (screenHeight - scaledHeight) / 2
+
+            // 繪製相機預覽（調整大小並居中）
+            val destRect = android.graphics.Rect(
+                left.toInt(),
+                top.toInt(),
+                (left + scaledWidth).toInt(),
+                (top + scaledHeight).toInt()
+            )
+            canvas.drawBitmap(sourceBitmap, null, destRect, null)
+
+            // 繪製黑色邊框（覆蓋整個螢幕）
             drawBlackBorder(canvas)
 
-            // 繪製條碼框
+            // 調整條碼位置以匹配縮放和位置
             val paint = Paint().apply {
                 strokeWidth = 6f
                 style = Paint.Style.STROKE
                 color = Color.RED
             }
-            drawBarcodeBoxes(canvas, paint, result.result)
+
+            // 繪製條碼框（需要調整位置）
+            for (data in result.result) {
+                data.boundingBox?.let { originalBox ->
+                    // 調整條碼框位置以匹配縮放和位移
+                    val scaledBox = android.graphics.RectF(
+                        left + originalBox.left * scale,
+                        top + originalBox.top * scale,
+                        left + originalBox.right * scale,
+                        top + originalBox.bottom * scale
+                    )
+
+                    // QR碼使用紅色，其他條碼使用綠色
+                    paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
+                    canvas.drawRect(scaledBox, paint)
+                }
+            }
+        } else {
+            // 創建透明覆蓋層，只繪製框架（直接使用螢幕尺寸）
+            bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+
+            // 整個畫布透明
+            canvas.drawColor(Color.TRANSPARENT)
+
+            // 繪製黑色邊框（覆蓋整個螢幕）
+            drawBlackBorder(canvas)
+
+            // 如果有相機預覽圖像，計算條碼框的縮放和位置
+            if (result.bitmap != null) {
+                val sourceBitmap = result.bitmap
+                val sourceWidth = sourceBitmap!!.width
+                val sourceHeight = sourceBitmap!!.height
+
+                // 計算縮放比例
+                val scaleX = screenWidth.toFloat() / sourceWidth
+                val scaleY = screenHeight.toFloat() / sourceHeight
+                val scale = maxOf(scaleX, scaleY)
+
+                // 計算縮放後的尺寸
+                val scaledWidth = sourceWidth * scale
+                val scaledHeight = sourceHeight * scale
+
+                // 計算居中的位置
+                val left = (screenWidth - scaledWidth) / 2
+                val top = (screenHeight - scaledHeight) / 2
+
+                // 繪製條碼框
+                val paint = Paint().apply {
+                    strokeWidth = 6f
+                    style = Paint.Style.STROKE
+                    color = Color.RED
+                }
+
+                // 繪製調整後的條碼框
+                for (data in result.result) {
+                    data.boundingBox?.let { originalBox ->
+                        // 調整條碼框位置
+                        val scaledBox = android.graphics.RectF(
+                            left + originalBox.left * scale,
+                            top + originalBox.top * scale,
+                            left + originalBox.right * scale,
+                            top + originalBox.bottom * scale
+                        )
+
+                        // QR碼使用紅色，其他條碼使用綠色
+                        paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
+                        canvas.drawRect(scaledBox, paint)
+                    }
+                }
+            } else {
+                // 沒有相機預覽圖像，無法確定條碼位置
+                // 這種情況應該不會發生，因為掃描結果中總是包含bitmap
+            }
         }
 
-        // Update UI
+        // 更新UI
         overlayImageView?.setImageBitmap(bitmap)
 
         // 更新文本顯示
@@ -199,7 +291,6 @@ class MainActivity : BarcodeCameraScanActivity() {
         }
         resultTextView?.text = buffer.toString()
     }
-
     /**
      * 繪製黑色邊框
      */
