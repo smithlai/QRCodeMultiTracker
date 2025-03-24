@@ -49,15 +49,4 @@ fun Bitmap.drawRect(block: (canvas: Canvas, paint: Paint) -> Unit): Bitmap {
     return result
 }
 
-/**
- * 获取[Bitmap]
- */
-fun Context.getBitmap(uri: Uri): Bitmap {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        val source = ImageDecoder.createSource(contentResolver, uri)
-        ImageDecoder.decodeBitmap(source).copy(Bitmap.Config.ARGB_8888, true)
-    } else {
-        MediaStore.Images.Media.getBitmap(contentResolver, uri)
-    }
-}
 
