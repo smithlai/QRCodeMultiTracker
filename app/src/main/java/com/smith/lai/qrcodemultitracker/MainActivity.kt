@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -22,33 +24,33 @@ import com.king.mlkit.vision.barcode.analyze.BarcodeScanningAnalyzer
 import com.smith.lai.qrcodemultitracker.ext.drawRect
 
 /**
- * 連續偵測多個二維碼示例
+ * 多格式條碼掃描器
  * 支持同時掃描條形碼和QR碼
  */
 class MainActivity : BarcodeCameraScanActivity() {
 
     companion object {
-        // 全局變數來控制掃描模式
-        // true: 持續掃描
-        // false: 跳出確認視窗
+        // 掃描模式控制
+        // true: 持續掃描 | false: 跳出確認視窗
         private var USE_REALTIME_MODE = true
 
-        // 是否在覆蓋層上顯示相機預覽圖像
-        // true: 截圖+紅框
-        // false: 只紅框
+        // 覆蓋層模式控制
+        // true: 截圖+紅框 | false: 只紅框
         private var USE_CAMERA_BITMAP = false
 
         // 日誌標籤
         private const val TAG = "MultiFormatScanner"
     }
 
-    // Handler for updating UI
-    private val handler = Handler(Looper.getMainLooper())
+    // UI更新控制
     private var lastUpdateTime = 0L
-    private val updateIntervalMs = 30 // Update UI every 30ms
+    private val updateIntervalMs = 10 // 每10毫秒更新一次UI
 
-    // Keep track of current barcodes
+    // 條碼狀態追蹤
     private var currentBarcodes: MutableList<Barcode>? = null
+    private var hasClearedUI = false // 追蹤UI是否已經被清空
+
+    // UI元素
     private var overlayImageView: ImageView? = null
     private var resultTextView: TextView? = null
 
@@ -60,34 +62,24 @@ class MainActivity : BarcodeCameraScanActivity() {
 
     /**
      * 創建多格式條碼分析器
-     * 支持所有條碼格式，包括QR碼和其他一維碼
      */
     override fun createAnalyzer(): Analyzer<MutableList<Barcode>>? {
-        // 設置掃描所有格式的條碼，包括QR碼和一維條碼
         return BarcodeScanningAnalyzer(Barcode.FORMAT_ALL_FORMATS)
     }
 
     override fun initCameraScan(cameraScan: CameraScan<MutableList<Barcode>>) {
         super.initCameraScan(cameraScan)
 
-        // 根據模式設置不同的行為
         if (USE_REALTIME_MODE) {
-            cameraScan.setPlayBeep(false) // 實時模式關閉提示音
-                .setVibrate(false)        // 實時模式關閉震動
-
-            // 隱藏掃描框
+            cameraScan.setPlayBeep(false).setVibrate(false)
             viewfinderView?.visibility = View.GONE
         } else {
-            cameraScan.setPlayBeep(true)  // 原始模式開啟提示音
-                .setVibrate(true)         // 原始模式開啟震動
-
-            // 顯示掃描框
+            cameraScan.setPlayBeep(true).setVibrate(true)
             viewfinderView?.visibility = View.VISIBLE
         }
     }
 
     override fun getLayoutId(): Int {
-        // 根據模式選擇不同的布局
         return if (USE_REALTIME_MODE) {
             R.layout.continuous_qrcode_scan_activity
         } else {
@@ -98,61 +90,126 @@ class MainActivity : BarcodeCameraScanActivity() {
     override fun initUI() {
         super.initUI()
 
-        // 只在實時模式下初始化這些視圖
         if (USE_REALTIME_MODE) {
             overlayImageView = findViewById(R.id.overlayImageView)
             resultTextView = findViewById(R.id.resultTextView)
         }
     }
 
+    /**
+     * 掃描失敗時的回調
+     * 只在需要時清除UI，避免重複更新
+     */
+    override fun onScanResultFailure() {
+        // 只在實時模式且未清除過UI時執行清除操作
+        if (USE_REALTIME_MODE && !hasClearedUI && currentBarcodes?.isNotEmpty() == true) {
+            Log.d(TAG, "No barcode detected: clearUI()")
+            clearUI()
+            hasClearedUI = true // 標記UI已經被清空
+        }
+
+        // 繼續掃描
+        cameraScan.setAnalyzeImage(true)
+    }
+
+    /**
+     * 清除UI上的條碼框和文本
+     */
+    private fun clearUI() {
+        // 清空當前條碼列表
+        currentBarcodes = mutableListOf()
+
+        // 獲取螢幕尺寸
+        val screenWidth = overlayImageView?.width ?: resources.displayMetrics.widthPixels
+        val screenHeight = overlayImageView?.height ?: resources.displayMetrics.heightPixels
+
+        // 創建透明覆蓋層，只繪製黑框
+        val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT)
+        drawBlackBorder(canvas)
+
+        // 更新UI
+        overlayImageView?.setImageBitmap(bitmap)
+        resultTextView?.text = ""
+    }
+
+    /**
+     * 掃描結果回調
+     */
     override fun onScanResultCallback(result: AnalyzeResult<MutableList<Barcode>>) {
         if (USE_REALTIME_MODE) {
-            // 實時模式: 持續掃描
-            val currentTime = System.currentTimeMillis()
-            if (currentTime - lastUpdateTime >= updateIntervalMs) {
-                lastUpdateTime = currentTime
-                updateUI(result)
-            }
-
-            // 繼續掃描
-            cameraScan.setAnalyzeImage(true)
+            handleRealtimeMode(result)
         } else {
-            // 原始模式: 停止掃描並顯示結果對話框
-            // 停止分析
-            cameraScan.setAnalyzeImage(false)
-
-            val buffer = StringBuilder()
-            val bitmap = result.bitmap?.drawRect { canvas, paint ->
-                for ((index, data) in result.result.withIndex()) {
-                    // 顯示條碼類型和內容
-                    val barcodeType = getBarcodeTypeName(data.format)
-                    buffer.append("[$index] $barcodeType: ").append(data.displayValue).append("\n")
-                    data.boundingBox?.let { box ->
-                        canvas.drawRect(box, paint)
-                    }
-                }
-            }
-
-            val config = AppDialogConfig(this, R.layout.barcode_result_dialog)
-            config.setContent(buffer).setOnClickConfirm {
-                AppDialog.INSTANCE.dismissDialog()
-                cameraScan.setAnalyzeImage(true)
-            }.setOnClickCancel {
-                AppDialog.INSTANCE.dismissDialog()
-                finish()
-            }
-
-            val imageView = config.getView<ImageView>(R.id.ivDialogContent)
-            imageView.setImageBitmap(bitmap)
-            AppDialog.INSTANCE.showDialog(config, false)
+            handleOriginalMode(result)
         }
     }
 
+    /**
+     * 處理實時模式的掃描結果
+     */
+    private fun handleRealtimeMode(result: AnalyzeResult<MutableList<Barcode>>) {
+        // 重設UI清除狀態，因為檢測到了新的條碼
+        hasClearedUI = false
+
+        // 節流UI更新，避免過於頻繁
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastUpdateTime >= updateIntervalMs) {
+            lastUpdateTime = currentTime
+            updateUI(result)
+        }
+
+        // 繼續掃描
+        cameraScan.setAnalyzeImage(true)
+    }
+
+    /**
+     * 處理原始模式的掃描結果
+     */
+    private fun handleOriginalMode(result: AnalyzeResult<MutableList<Barcode>>) {
+        // 停止分析
+        cameraScan.setAnalyzeImage(false)
+
+        val buffer = StringBuilder()
+        val bitmap = result.bitmap?.drawRect { canvas, paint ->
+            for ((index, data) in result.result.withIndex()) {
+                val barcodeType = getBarcodeTypeName(data.format)
+                buffer.append("[$index] $barcodeType: ").append(data.displayValue).append("\n")
+                data.boundingBox?.let { box ->
+                    paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
+                    canvas.drawRect(box, paint)
+                }
+            }
+        }
+
+        showResultDialog(buffer.toString(), bitmap)
+    }
+
+    /**
+     * 顯示結果對話框
+     */
+    private fun showResultDialog(content: String, bitmap: Bitmap?) {
+        val config = AppDialogConfig(this, R.layout.barcode_result_dialog)
+        config.setContent(content).setOnClickConfirm {
+            AppDialog.INSTANCE.dismissDialog()
+            cameraScan.setAnalyzeImage(true)
+        }.setOnClickCancel {
+            AppDialog.INSTANCE.dismissDialog()
+            finish()
+        }
+
+        val imageView = config.getView<ImageView>(R.id.ivDialogContent)
+        imageView.setImageBitmap(bitmap)
+        AppDialog.INSTANCE.showDialog(config, false)
+    }
+
+    /**
+     * 更新UI
+     */
     private fun updateUI(result: AnalyzeResult<MutableList<Barcode>>) {
-        // 只在實時模式下更新UI
         if (!USE_REALTIME_MODE) return
 
-        // Store current barcodes
+        // 儲存當前條碼
         currentBarcodes = result.result
 
         // 獲取螢幕尺寸
@@ -160,137 +217,138 @@ class MainActivity : BarcodeCameraScanActivity() {
         val screenHeight = overlayImageView?.height ?: resources.displayMetrics.heightPixels
 
         // 根據設置決定使用哪種覆蓋層模式
-        val bitmap: Bitmap
-        if (USE_CAMERA_BITMAP && result.bitmap != null) {
-            // 使用相機預覽圖像作為覆蓋層基礎，但調整尺寸以適應螢幕
-            val sourceBitmap = result.bitmap
+        val bitmap = if (USE_CAMERA_BITMAP && result.bitmap != null) {
+            createBitmapWithCameraPreview(result, screenWidth, screenHeight)
+        } else {
+            createTransparentOverlay(result, screenWidth, screenHeight)
+        }
 
-            // 創建一個與螢幕大小相同的bitmap
-            bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
+        // 更新UI
+        overlayImageView?.setImageBitmap(bitmap)
+        updateTextResult(result.result)
+    }
 
-            // 計算縮放和位置，確保相機預覽居中
-            val sourceWidth = sourceBitmap!!.width
-            val sourceHeight = sourceBitmap!!.height
+    /**
+     * 使用相機預覽圖像創建覆蓋層
+     */
+    private fun createBitmapWithCameraPreview(result: AnalyzeResult<MutableList<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
+        val sourceBitmap = result.bitmap!!
+        val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
 
-            // 計算縮放比例（保持寬高比）
-            val scaleX = screenWidth.toFloat() / sourceWidth
-            val scaleY = screenHeight.toFloat() / sourceHeight
-            val scale = maxOf(scaleX, scaleY) // 使用較大的縮放比例確保覆蓋整個螢幕
+        // 計算縮放和位置
+        val sourceWidth = sourceBitmap.width
+        val sourceHeight = sourceBitmap.height
+        val scale = calculateScale(sourceWidth, sourceHeight, screenWidth, screenHeight)
+        val scaledWidth = sourceWidth * scale
+        val scaledHeight = sourceHeight * scale
+        val left = (screenWidth - scaledWidth) / 2
+        val top = (screenHeight - scaledHeight) / 2
 
-            // 計算縮放後的尺寸
-            val scaledWidth = sourceWidth * scale
-            val scaledHeight = sourceHeight * scale
+        // 繪製相機預覽
+        val destRect = Rect(
+            left.toInt(),
+            top.toInt(),
+            (left + scaledWidth).toInt(),
+            (top + scaledHeight).toInt()
+        )
+        canvas.drawBitmap(sourceBitmap, null, destRect, null)
 
-            // 計算居中的位置
-            val left = (screenWidth - scaledWidth) / 2
-            val top = (screenHeight - scaledHeight) / 2
+        // 繪製黑色邊框
+        drawBlackBorder(canvas)
 
-            // 繪製相機預覽（調整大小並居中）
-            val destRect = android.graphics.Rect(
-                left.toInt(),
-                top.toInt(),
-                (left + scaledWidth).toInt(),
-                (top + scaledHeight).toInt()
-            )
-            canvas.drawBitmap(sourceBitmap, null, destRect, null)
-
-            // 繪製黑色邊框（覆蓋整個螢幕）
-            drawBlackBorder(canvas)
-
-            // 調整條碼位置以匹配縮放和位置
+        // 繪製條碼框
+        if (result.result.isNotEmpty()) {
             val paint = Paint().apply {
                 strokeWidth = 6f
                 style = Paint.Style.STROKE
-                color = Color.RED
             }
 
-            // 繪製條碼框（需要調整位置）
             for (data in result.result) {
                 data.boundingBox?.let { originalBox ->
-                    // 調整條碼框位置以匹配縮放和位移
-                    val scaledBox = android.graphics.RectF(
+                    val scaledBox = RectF(
                         left + originalBox.left * scale,
                         top + originalBox.top * scale,
                         left + originalBox.right * scale,
                         top + originalBox.bottom * scale
                     )
 
-                    // QR碼使用紅色，其他條碼使用綠色
                     paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
                     canvas.drawRect(scaledBox, paint)
                 }
             }
-        } else {
-            // 創建透明覆蓋層，只繪製框架（直接使用螢幕尺寸）
-            bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
+        }
 
-            // 整個畫布透明
-            canvas.drawColor(Color.TRANSPARENT)
+        return bitmap
+    }
 
-            // 繪製黑色邊框（覆蓋整個螢幕）
-            drawBlackBorder(canvas)
+    /**
+     * 創建透明覆蓋層
+     */
+    private fun createTransparentOverlay(result: AnalyzeResult<MutableList<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT)
 
-            // 如果有相機預覽圖像，計算條碼框的縮放和位置
-            if (result.bitmap != null) {
-                val sourceBitmap = result.bitmap
-                val sourceWidth = sourceBitmap!!.width
-                val sourceHeight = sourceBitmap!!.height
+        // 繪製黑色邊框
+        drawBlackBorder(canvas)
 
-                // 計算縮放比例
-                val scaleX = screenWidth.toFloat() / sourceWidth
-                val scaleY = screenHeight.toFloat() / sourceHeight
-                val scale = maxOf(scaleX, scaleY)
+        // 只有在有條碼時繪製條碼框
+        if (result.result.isNotEmpty() && result.bitmap != null) {
+            val sourceBitmap = result.bitmap!!
+            val sourceWidth = sourceBitmap.width
+            val sourceHeight = sourceBitmap.height
 
-                // 計算縮放後的尺寸
-                val scaledWidth = sourceWidth * scale
-                val scaledHeight = sourceHeight * scale
+            val scale = calculateScale(sourceWidth, sourceHeight, screenWidth, screenHeight)
+            val scaledWidth = sourceWidth * scale
+            val scaledHeight = sourceHeight * scale
+            val left = (screenWidth - scaledWidth) / 2
+            val top = (screenHeight - scaledHeight) / 2
 
-                // 計算居中的位置
-                val left = (screenWidth - scaledWidth) / 2
-                val top = (screenHeight - scaledHeight) / 2
+            val paint = Paint().apply {
+                strokeWidth = 6f
+                style = Paint.Style.STROKE
+            }
 
-                // 繪製條碼框
-                val paint = Paint().apply {
-                    strokeWidth = 6f
-                    style = Paint.Style.STROKE
-                    color = Color.RED
+            for (data in result.result) {
+                data.boundingBox?.let { originalBox ->
+                    val scaledBox = RectF(
+                        left + originalBox.left * scale,
+                        top + originalBox.top * scale,
+                        left + originalBox.right * scale,
+                        top + originalBox.bottom * scale
+                    )
+
+                    paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
+                    canvas.drawRect(scaledBox, paint)
                 }
-
-                // 繪製調整後的條碼框
-                for (data in result.result) {
-                    data.boundingBox?.let { originalBox ->
-                        // 調整條碼框位置
-                        val scaledBox = android.graphics.RectF(
-                            left + originalBox.left * scale,
-                            top + originalBox.top * scale,
-                            left + originalBox.right * scale,
-                            top + originalBox.bottom * scale
-                        )
-
-                        // QR碼使用紅色，其他條碼使用綠色
-                        paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
-                        canvas.drawRect(scaledBox, paint)
-                    }
-                }
-            } else {
-                // 沒有相機預覽圖像，無法確定條碼位置
-                // 這種情況應該不會發生，因為掃描結果中總是包含bitmap
             }
         }
 
-        // 更新UI
-        overlayImageView?.setImageBitmap(bitmap)
+        return bitmap
+    }
 
-        // 更新文本顯示
+    /**
+     * 更新文本結果
+     */
+    private fun updateTextResult(barcodes: MutableList<Barcode>) {
         val buffer = StringBuilder()
-        for ((index, data) in result.result.withIndex()) {
+        for ((index, data) in barcodes.withIndex()) {
             val barcodeType = getBarcodeTypeName(data.format)
             buffer.append("[$index] $barcodeType: ").append(data.displayValue).append("\n")
         }
         resultTextView?.text = buffer.toString()
     }
+
+    /**
+     * 計算縮放比例
+     */
+    private fun calculateScale(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int): Float {
+        val scaleX = targetWidth.toFloat() / sourceWidth
+        val scaleY = targetHeight.toFloat() / sourceHeight
+        return maxOf(scaleX, scaleY) // 使用較大的縮放比例確保覆蓋整個螢幕
+    }
+
     /**
      * 繪製黑色邊框
      */
@@ -298,22 +356,9 @@ class MainActivity : BarcodeCameraScanActivity() {
         val borderPaint = Paint().apply {
             style = Paint.Style.STROKE
             color = Color.BLACK
-            strokeWidth = 12f // Thicker border
+            strokeWidth = 12f
         }
         canvas.drawRect(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), borderPaint)
-    }
-
-    /**
-     * 繪製條碼框
-     */
-    private fun drawBarcodeBoxes(canvas: Canvas, paint: Paint, barcodes: MutableList<Barcode>) {
-        for (data in barcodes) {
-            data.boundingBox?.let { box ->
-                // QR碼使用紅色，其他條碼使用綠色
-                paint.color = if (data.format == Barcode.FORMAT_QR_CODE) Color.RED else Color.GREEN
-                canvas.drawRect(box, paint)
-            }
-        }
     }
 
     /**
@@ -338,18 +383,15 @@ class MainActivity : BarcodeCameraScanActivity() {
         }
     }
 
-    /**
-     * 設置是否使用相機預覽圖像作為覆蓋層基礎
-     * @param useCameraBitmap true表示使用相機預覽圖像，false表示使用透明覆蓋層
-     */
-    fun setUseCameraBitmap(useCameraBitmap: Boolean) {
-        USE_CAMERA_BITMAP = useCameraBitmap
-    }
-
+//    /**
+//     * 設置是否使用相機預覽圖像作為覆蓋層基礎
+//     */
+//    fun setUseCameraBitmap(useCameraBitmap: Boolean) {
+//        USE_CAMERA_BITMAP = useCameraBitmap
+//    }
+//
 //    /**
 //     * 切換掃描模式
-//     * @param useRealtimeMode 是否使用實時模式
-//     * @return 是否需要重啟活動以應用新模式
 //     */
 //    fun switchScanMode(useRealtimeMode: Boolean): Boolean {
 //        if (USE_REALTIME_MODE != useRealtimeMode) {
