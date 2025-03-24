@@ -13,12 +13,14 @@ import android.util.Log
 import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.camera.core.CameraSelector
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.king.app.dialog.AppDialog
 import com.king.app.dialog.AppDialogConfig
 import com.king.camera.scan.AnalyzeResult
 import com.king.camera.scan.CameraScan
 import com.king.camera.scan.analyze.Analyzer
+import com.king.camera.scan.config.CameraConfigFactory
 import com.king.mlkit.vision.barcode.BarcodeCameraScanActivity
 import com.king.mlkit.vision.barcode.analyze.BarcodeScanningAnalyzer
 import com.smith.lai.qrcodemultitracker.ext.drawRect
@@ -70,6 +72,10 @@ class MainActivity : BarcodeCameraScanActivity() {
     override fun initCameraScan(cameraScan: CameraScan<MutableList<Barcode>>) {
         super.initCameraScan(cameraScan)
 
+        // 創建自定義的相機配置，指定使用後置相機
+        val cameraConfig = CameraConfigFactory.createDefaultCameraConfig(this, CameraSelector.LENS_FACING_BACK)
+        cameraScan.setCameraConfig(cameraConfig)
+
         if (USE_REALTIME_MODE) {
             cameraScan.setPlayBeep(false).setVibrate(false)
             viewfinderView?.visibility = View.GONE
@@ -94,6 +100,27 @@ class MainActivity : BarcodeCameraScanActivity() {
             overlayImageView = findViewById(R.id.overlayImageView)
             resultTextView = findViewById(R.id.resultTextView)
         }
+    }
+
+    /**
+     * 處理螢幕旋轉事件 - 重新初始化相機
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d(TAG, "Configuration changed: ${if(newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "Landscape" else "Portrait"}")
+
+        // 釋放相機資源
+        getCameraScan()?.release()
+
+        // 短暫延遲以確保UI尺寸已更新
+        Handler(Looper.getMainLooper()).postDelayed({
+            // 重新初始化UI
+            initUI()
+
+            // 清除UI
+            hasClearedUI = false
+            clearUI()
+        }, 100)
     }
 
     /**
@@ -230,29 +257,40 @@ class MainActivity : BarcodeCameraScanActivity() {
 
     /**
      * 使用相機預覽圖像創建覆蓋層
+     * 預覽圖像保持原始大小但半透明
      */
     private fun createBitmapWithCameraPreview(result: AnalyzeResult<MutableList<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
         val sourceBitmap = result.bitmap!!
         val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // 計算縮放和位置
+        // 背景設為透明
+        canvas.drawColor(Color.TRANSPARENT)
+
+        // 使用已有的縮放計算方法
         val sourceWidth = sourceBitmap.width
         val sourceHeight = sourceBitmap.height
         val scale = calculateScale(sourceWidth, sourceHeight, screenWidth, screenHeight)
+
+        // 計算縮放後的尺寸和位置
         val scaledWidth = sourceWidth * scale
         val scaledHeight = sourceHeight * scale
         val left = (screenWidth - scaledWidth) / 2
         val top = (screenHeight - scaledHeight) / 2
 
-        // 繪製相機預覽
+        // 設置半透明效果的畫筆 (保持80%透明度)
+        val alphaPaint = Paint().apply {
+            alpha = 51  // 設置透明度 (0-255，51約為20%不透明，即80%透明)
+        }
+
+        // 繪製相機預覽 (原始大小但半透明)
         val destRect = Rect(
             left.toInt(),
             top.toInt(),
             (left + scaledWidth).toInt(),
             (top + scaledHeight).toInt()
         )
-        canvas.drawBitmap(sourceBitmap, null, destRect, null)
+        canvas.drawBitmap(sourceBitmap, null, destRect, alphaPaint)
 
         // 繪製黑色邊框
         drawBlackBorder(canvas)
@@ -266,6 +304,7 @@ class MainActivity : BarcodeCameraScanActivity() {
 
             for (data in result.result) {
                 data.boundingBox?.let { originalBox ->
+                    // 計算條碼框的位置
                     val scaledBox = RectF(
                         left + originalBox.left * scale,
                         top + originalBox.top * scale,
@@ -281,7 +320,6 @@ class MainActivity : BarcodeCameraScanActivity() {
 
         return bitmap
     }
-
     /**
      * 創建透明覆蓋層
      */
