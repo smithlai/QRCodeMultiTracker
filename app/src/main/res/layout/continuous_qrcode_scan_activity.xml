@@ -31,8 +31,7 @@
         android:padding="16dp"
         android:background="#80000000"
         android:textColor="#FFFFFF"
-        android:maxHeight="150dp"
-        android:scrollbars="vertical"/>
+        android:scrollbars="vertical" />
 
     <ImageView
         android:id="@+id/ivFlashlight"

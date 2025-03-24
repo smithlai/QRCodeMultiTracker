@@ -18,18 +18,19 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.king.app.dialog.AppDialog
 import com.king.app.dialog.AppDialogConfig
 import com.king.camera.scan.AnalyzeResult
+import com.king.camera.scan.BaseCameraScanActivity
 import com.king.camera.scan.CameraScan
 import com.king.camera.scan.analyze.Analyzer
 import com.king.camera.scan.config.CameraConfigFactory
-import com.king.mlkit.vision.barcode.BarcodeCameraScanActivity
 import com.king.mlkit.vision.barcode.analyze.BarcodeScanningAnalyzer
+import com.king.view.viewfinderview.ViewfinderView
 import com.smith.lai.qrcodemultitracker.ext.drawRect
 
 /**
  * 多格式條碼掃描器
  * 支持同時掃描條形碼和QR碼
  */
-class MainActivity : BarcodeCameraScanActivity() {
+class MainActivity : BaseCameraScanActivity<List<Barcode>>() {
 
     companion object {
         // 掃描模式控制
@@ -49,13 +50,13 @@ class MainActivity : BarcodeCameraScanActivity() {
     private val updateIntervalMs = 10 // 每10毫秒更新一次UI
 
     // 條碼狀態追蹤
-    private var currentBarcodes: MutableList<Barcode>? = null
+    private var currentBarcodes: List<Barcode>? = null
     private var hasClearedUI = false // 追蹤UI是否已經被清空
 
     // UI元素
     private var overlayImageView: ImageView? = null
     private var resultTextView: TextView? = null
-
+    protected var viewfinderView: ViewfinderView? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.d(TAG, "Current scan mode: ${if(USE_REALTIME_MODE) "Real-time" else "Original"}")
@@ -65,11 +66,11 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 創建多格式條碼分析器
      */
-    override fun createAnalyzer(): Analyzer<MutableList<Barcode>>? {
+    override fun createAnalyzer(): Analyzer<List<Barcode>> {
         return BarcodeScanningAnalyzer(Barcode.FORMAT_ALL_FORMATS)
     }
 
-    override fun initCameraScan(cameraScan: CameraScan<MutableList<Barcode>>) {
+    override fun initCameraScan(cameraScan: CameraScan<List<Barcode>>) {
         super.initCameraScan(cameraScan)
 
         // 創建自定義的相機配置，指定使用後置相機
@@ -92,8 +93,15 @@ class MainActivity : BarcodeCameraScanActivity() {
             R.layout.multiple_qrcode_scan_activity
         }
     }
+    fun getViewfinderViewId(): Int {
+        return R.id.viewfinderView
+    }
 
     override fun initUI() {
+        val viewfinderViewId = getViewfinderViewId()
+        if (viewfinderViewId != View.NO_ID && viewfinderViewId != 0) {
+            viewfinderView = findViewById(viewfinderViewId)
+        }
         super.initUI()
 
         if (USE_REALTIME_MODE) {
@@ -164,7 +172,7 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 掃描結果回調
      */
-    override fun onScanResultCallback(result: AnalyzeResult<MutableList<Barcode>>) {
+    override fun onScanResultCallback(result: AnalyzeResult<List<Barcode>>) {
         if (USE_REALTIME_MODE) {
             handleRealtimeMode(result)
         } else {
@@ -175,7 +183,7 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 處理實時模式的掃描結果
      */
-    private fun handleRealtimeMode(result: AnalyzeResult<MutableList<Barcode>>) {
+    private fun handleRealtimeMode(result: AnalyzeResult<List<Barcode>>) {
         // 重設UI清除狀態，因為檢測到了新的條碼
         hasClearedUI = false
 
@@ -193,7 +201,7 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 處理原始模式的掃描結果
      */
-    private fun handleOriginalMode(result: AnalyzeResult<MutableList<Barcode>>) {
+    private fun handleOriginalMode(result: AnalyzeResult<List<Barcode>>) {
         // 停止分析
         cameraScan.setAnalyzeImage(false)
 
@@ -233,7 +241,7 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 更新UI
      */
-    private fun updateUI(result: AnalyzeResult<MutableList<Barcode>>) {
+    private fun updateUI(result: AnalyzeResult<List<Barcode>>) {
         if (!USE_REALTIME_MODE) return
 
         // 儲存當前條碼
@@ -259,7 +267,7 @@ class MainActivity : BarcodeCameraScanActivity() {
      * 使用相機預覽圖像創建覆蓋層
      * 預覽圖像保持原始大小但半透明
      */
-    private fun createBitmapWithCameraPreview(result: AnalyzeResult<MutableList<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
+    private fun createBitmapWithCameraPreview(result: AnalyzeResult<List<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
         val sourceBitmap = result.bitmap!!
         val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -323,7 +331,7 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 創建透明覆蓋層
      */
-    private fun createTransparentOverlay(result: AnalyzeResult<MutableList<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
+    private fun createTransparentOverlay(result: AnalyzeResult<List<Barcode>>, screenWidth: Int, screenHeight: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.TRANSPARENT)
@@ -369,12 +377,14 @@ class MainActivity : BarcodeCameraScanActivity() {
     /**
      * 更新文本結果
      */
-    private fun updateTextResult(barcodes: MutableList<Barcode>) {
+    private fun updateTextResult(barcodes: List<Barcode>) {
         val buffer = StringBuilder()
+//        buffer.append("=== (${barcodes.size}) ===").append("\n")
         for ((index, data) in barcodes.withIndex()) {
             val barcodeType = getBarcodeTypeName(data.format)
-            buffer.append("[$index] $barcodeType: ").append(data.displayValue).append("\n")
+            buffer.append("[${index+1}] $barcodeType: ").append(data.displayValue).append("\n")
         }
+
         resultTextView?.text = buffer.toString()
     }
 
